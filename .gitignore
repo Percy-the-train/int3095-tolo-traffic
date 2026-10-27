@@ -1,0 +1,7 @@
+collector/data/
+collector/*.log
+collector/*.lock
+__pycache__/
+*.pyc
+.idea/
+.vscode/
