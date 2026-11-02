@@ -47,6 +47,7 @@ SEGMENT_FIELDS = [
     "poll_time_utc", "feed_date", "feed_time", "irn_version",
     "segment_id", "speed_kmh", "valid",
 ]
+WEATHER_FIELDS = ["poll_time_utc", "record_time", "metric", "place", "value"]
 
 DETECTOR_KEY = ["feed_date", "period_from", "period_to", "detector_id", "lane_id"]
 SEGMENT_KEY = ["feed_date", "feed_time", "segment_id"]
@@ -115,6 +116,11 @@ def create_tables(conn):
             segment_id TEXT, speed_kmh TEXT, valid TEXT,
             UNIQUE (feed_date, feed_time, segment_id)
         )""")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS weather (
+            poll_time_utc TEXT, record_time TEXT, metric TEXT, place TEXT, value TEXT,
+            UNIQUE (record_time, metric, place)
+        )""")
     conn.commit()
 
 
@@ -123,6 +129,7 @@ def merge_zip(conn, blob):
         names = zf.namelist()
         det_name = next((n for n in names if n.endswith("detector_readings.csv")), None)
         seg_name = next((n for n in names if n.endswith("segment_readings.csv")), None)
+        wx_name = next((n for n in names if n.endswith("hko_current_2026.csv")), None)
         if det_name:
             text = zf.read(det_name).decode("utf-8", errors="replace")
             reader = csv.DictReader(text.splitlines())
@@ -136,6 +143,13 @@ def merge_zip(conn, blob):
             conn.executemany(
                 "INSERT OR IGNORE INTO segments VALUES (?,?,?,?,?,?,?)",
                 [[row.get(f, "") for f in SEGMENT_FIELDS] for row in reader],
+            )
+        if wx_name:
+            text = zf.read(wx_name).decode("utf-8", errors="replace")
+            reader = csv.DictReader(text.splitlines())
+            conn.executemany(
+                "INSERT OR IGNORE INTO weather VALUES (?,?,?,?,?)",
+                [[row.get(f, "") for f in WEATHER_FIELDS] for row in reader],
             )
     conn.commit()
 
@@ -158,6 +172,7 @@ def main():
     parser.add_argument("--db", default="merge.db")
     parser.add_argument("--out-detectors", default="detector_readings_merged.csv")
     parser.add_argument("--out-segments", default="segment_readings_merged.csv")
+    parser.add_argument("--out-weather", default="weather_merged.csv")
     args = parser.parse_args()
 
     progress_path = args.db + ".progress"
@@ -184,6 +199,7 @@ def main():
 
     export_csv(conn, "detectors", DETECTOR_FIELDS, args.out_detectors)
     export_csv(conn, "segments", SEGMENT_FIELDS, args.out_segments)
+    export_csv(conn, "weather", WEATHER_FIELDS, args.out_weather)
     conn.close()
 
 

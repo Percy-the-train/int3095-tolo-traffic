@@ -30,6 +30,7 @@ jobs:
           path: |
             data/traffic/detector_readings.csv
             data/traffic/segment_readings.csv
+            data/weather/hko_current_2026.csv
           retention-days: 90
           compression-level: 6
       - name: Schedule next run

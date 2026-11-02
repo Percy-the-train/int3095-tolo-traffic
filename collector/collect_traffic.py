@@ -10,6 +10,8 @@ Data sources:
      https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml
   2. Traffic Speeds of Road Network Segments (processed segment speeds)
      https://resource.data.one.gov.hk/td/traffic-detectors/irnAvgSpeed-all.xml
+  3. HKO current weather report (temperature, humidity, district rainfall)
+     https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread
 
 These feeds contain ONLY the current snapshot, so this script must be run
 on a schedule (e.g. every 5 minutes) to build up a history.
@@ -52,6 +54,7 @@ SEGMENT_LOOKUP_URL = (
 )
 RAW_DETECTOR_URL = "https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml"
 SEGMENT_SPEED_URL = "https://resource.data.one.gov.hk/td/traffic-detectors/irnAvgSpeed-all.xml"
+WEATHER_URL = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=en"
 
 # ---------------------------------------------------------------- filters
 DETECTOR_ROAD_FILTER = ("TOLO", "TAI PO ROAD")          # substring, uppercase
@@ -63,6 +66,7 @@ DETECTOR_CSV = os.path.join(DATA_DIR, "detector_readings.csv")
 SEGMENT_CSV = os.path.join(DATA_DIR, "segment_readings.csv")
 DETECTOR_LOOKUP_CACHE = os.path.join(DATA_DIR, "detector_lookup.csv")
 SEGMENT_LOOKUP_CACHE = os.path.join(DATA_DIR, "segment_lookup.csv")
+WEATHER_CSV = os.path.join(PROJECT_DIR, "data", "weather", "hko_current_2026.csv")
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (INT3095 traffic data collector)"}
 
@@ -75,6 +79,7 @@ SEGMENT_FIELDS = [
     "poll_time_utc", "feed_date", "feed_time", "irn_version",
     "segment_id", "speed_kmh", "valid",
 ]
+WEATHER_FIELDS = ["poll_time_utc", "record_time", "metric", "place", "value"]
 
 
 def fetch(url, retries=3):
@@ -201,6 +206,36 @@ def poll_segments(segment_filter, poll_time):
     return rows
 
 
+def poll_weather(poll_time):
+    """Parse the HKO current weather report into long-format rows."""
+    import json
+    body = fetch(WEATHER_URL).decode("utf-8", errors="replace")
+    data = json.loads(body)
+    rows = []
+    for group_key, metric in (("temperature", "temp_c"), ("humidity", "humidity_pct")):
+        group = data.get(group_key) or {}
+        record_time = group.get("recordTime", "")
+        for item in group.get("data", []):
+            rows.append({
+                "poll_time_utc": poll_time,
+                "record_time": record_time,
+                "metric": metric,
+                "place": item.get("place", ""),
+                "value": item.get("value", ""),
+            })
+    rainfall = data.get("rainfall") or {}
+    record_time = rainfall.get("recordTime", "")
+    for item in rainfall.get("data", []):
+        rows.append({
+            "poll_time_utc": poll_time,
+            "record_time": record_time,
+            "metric": "rain_mm",
+            "place": item.get("place", ""),
+            "value": item.get("max", ""),
+        })
+    return rows
+
+
 def append_rows(path, fields, rows):
     """Append rows to a CSV, writing the header when the file is new."""
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -265,8 +300,14 @@ def poll_once():
                         poll_detectors(detector_map, poll_time))
     n_seg = append_rows(SEGMENT_CSV, SEGMENT_FIELDS,
                         poll_segments(segment_filter, poll_time))
-    logging.info("poll %s: %d detector rows, %d segment rows appended",
-                 poll_time, n_det, n_seg)
+    try:
+        n_wx = append_rows(WEATHER_CSV, WEATHER_FIELDS,
+                           poll_weather(poll_time))
+    except Exception as exc:
+        logging.warning("weather poll failed: %s", exc)
+        n_wx = 0
+    logging.info("poll %s: %d detector rows, %d segment rows, %d weather rows appended",
+                 poll_time, n_det, n_seg, n_wx)
     return n_det, n_seg
 
 
