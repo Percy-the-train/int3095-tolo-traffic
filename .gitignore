@@ -1,4 +1,4 @@
-collector/data/
+data/
 collector/*.log
 collector/*.lock
 __pycache__/

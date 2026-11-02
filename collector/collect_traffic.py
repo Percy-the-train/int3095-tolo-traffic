@@ -36,7 +36,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+PROJECT_DIR = os.path.dirname(BASE_DIR)
+DATA_DIR = os.environ.get("TRAFFIC_DATA_DIR") or os.path.join(PROJECT_DIR, "data", "traffic")
 LOG_FILE = os.path.join(BASE_DIR, "collector.log")
 LOCK_FILE = os.path.join(BASE_DIR, "collector.lock")
 
@@ -212,6 +213,26 @@ def append_rows(path, fields, rows):
     return len(rows)
 
 
+def lock_is_stale():
+    """A lock is stale if its owner process is dead or it is very old."""
+    try:
+        with open(LOCK_FILE, encoding="utf-8") as f:
+            pid = int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        pid = 0
+    try:
+        age = time.time() - os.path.getmtime(LOCK_FILE)
+    except OSError:
+        return True
+    if pid:
+        try:
+            os.kill(pid, 0)  # existence check; raises if the process is gone
+            return False     # owner alive -> lock is valid
+        except (OSError, ProcessLookupError):
+            return True      # owner dead -> stale
+    return age > 15 * 60     # no pid readable -> fall back to age check
+
+
 def acquire_lock():
     """Create the lock file; return False if another run is still active."""
     try:
@@ -220,6 +241,13 @@ def acquire_lock():
         os.close(fd)
         return True
     except FileExistsError:
+        if lock_is_stale():
+            logging.warning("removing stale lock file (previous run crashed)")
+            try:
+                os.remove(LOCK_FILE)
+            except OSError:
+                return False
+            return acquire_lock()
         return False
 
 
